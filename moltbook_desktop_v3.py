@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self.apply_glass_dark_theme()
         self._load_saved_key()
 
-        self.setWindowTitle("Moltbook Desktop (Unofficial) — Modern")
+        self.setWindowTitle("Moltbook Human Entrance")
         self.resize(1400, 880)
 
     # ----- UI thread helpers -----
@@ -208,11 +208,11 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(10)
         self.main_splitter.addWidget(right)
 
-        self.main_splitter.setStretchFactor(0, 1)
-        self.main_splitter.setStretchFactor(1, 2)
+        self.main_splitter.setStretchFactor(0, 2)
+        self.main_splitter.setStretchFactor(1, 1)
 
         # Initial sizes (more room to drag; right starts bigger but can go thinner)
-        self.main_splitter.setSizes([520, 860])
+        self.main_splitter.setSizes([880, 500])
 
         # -------- Feed tab
         feed_tab = QWidget()
@@ -389,7 +389,7 @@ class MainWindow(QMainWindow):
         ac = QGridLayout(agent_controls)
 
         self.agent_lookup_name = QLineEdit()
-        self.agent_lookup_name.setPlaceholderText("Molty name (e.g. hypnos)")
+        self.agent_lookup_name.setPlaceholderText("Molty name")
         self.btn_agent_profile = QPushButton("Load Profile")
         self.btn_agent_follow = QPushButton("Follow")
         self.btn_agent_unfollow = QPushButton("Unfollow")
@@ -404,9 +404,9 @@ class MainWindow(QMainWindow):
         ac.addWidget(self.btn_agent_unfollow, 1, 2)
 
         self.my_desc = QLineEdit()
-        self.my_desc.setPlaceholderText("Update my description (PATCH)")
+        self.my_desc.setPlaceholderText("Update my description")
         self.my_metadata = QLineEdit()
-        self.my_metadata.setPlaceholderText('metadata JSON (optional), e.g. {"foo":"bar"}')
+        self.my_metadata.setPlaceholderText('metadata JSON (optional),')
         self.btn_update_me = QPushButton("Update My Profile")
         self.btn_update_me.clicked.connect(self.on_update_me)
 
@@ -445,7 +445,7 @@ class MainWindow(QMainWindow):
         self.mod_banner_color.setPlaceholderText("banner_color (optional) e.g. #1a1a2e")
         self.mod_theme_color = QLineEdit()
         self.mod_theme_color.setPlaceholderText("theme_color (optional) e.g. #ff4500")
-        self.btn_mod_patch = QPushButton("Update Settings (PATCH)")
+        self.btn_mod_patch = QPushButton("Update Settings")
         self.btn_mod_patch.clicked.connect(self.on_update_submolt_settings)
 
         self.btn_mod_avatar = QPushButton("Upload Submolt Avatar…")
@@ -488,14 +488,27 @@ class MainWindow(QMainWindow):
 
         self.tabs_left.addTab(mod_tab, "Moderation")
 
-        # -------- Right side (post + comments + log)
+        # -------- Log tab
+        log_tab = QWidget()
+        log_layout = QVBoxLayout(log_tab)
+
+        log_box = QGroupBox("Log")
+        lb = QVBoxLayout(log_box)
+
+        self.log_output = QPlainTextEdit()
+        self.log_output.setReadOnly(True)
+        self.log_output.setMaximumBlockCount(2000)
+
+        lb.addWidget(self.log_output)
+        log_layout.addWidget(log_box, 1)
+
+        self.tabs_left.addTab(log_tab, "Log")
+
+        # -------- Right side (post + comments)
         post_box = QGroupBox("Post")
         pb = QVBoxLayout(post_box)
 
         post_actions = QHBoxLayout()
-        self.post_title = QLabel("Select a post…")
-        self.post_title.setStyleSheet("font-size: 16px; font-weight: 700;")
-        post_actions.addWidget(self.post_title, 1)
 
         self.btn_post_reload = QPushButton("Reload")
         self.btn_post_upvote = QPushButton("Upvote")
@@ -520,7 +533,7 @@ class MainWindow(QMainWindow):
         self.post_body.setReadOnly(True)
         pb.addWidget(self.post_body, 1)
 
-        right_layout.addWidget(post_box, 3)
+        right_layout.addWidget(post_box, 7)
 
         comments_box = QGroupBox("Comments")
         cb = QVBoxLayout(comments_box)
@@ -572,16 +585,7 @@ class MainWindow(QMainWindow):
 
         cb.addWidget(composer, 1)
 
-        right_layout.addWidget(comments_box, 4)
-
-        log_box = QGroupBox("Log (current action)")
-        lb = QVBoxLayout(log_box)
-        self.log_output = QPlainTextEdit()
-        self.log_output.setReadOnly(True)
-        # We still cap it, but since we clear each action, it will only contain current action anyway.
-        self.log_output.setMaximumBlockCount(400)
-        lb.addWidget(self.log_output)
-        right_layout.addWidget(log_box, 2)
+        right_layout.addWidget(comments_box, 3)
 
     # ---------- Theme ----------
     def apply_glass_dark_theme(self):
@@ -1263,7 +1267,7 @@ class MainWindow(QMainWindow):
             resp = self.client.add_comment(pid, content=content, parent_id=parent)
             data = parse_json(self.client, resp)
             self.bus.log_line.emit(f"Comment response HTTP {resp.status_code}: {json.dumps(data, ensure_ascii=False)}")
-            if resp.status_code != 200:
+            if resp.status_code not in (200, 201):
                 raise ValueError(data.get("error") or json.dumps(data, indent=2, ensure_ascii=False))
             return data
 
