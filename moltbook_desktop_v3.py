@@ -1576,7 +1576,20 @@ class MainWindow(QMainWindow):
             return data
 
         def done(data):
-            QMessageBox.information(self, "Submolt Info", json.dumps(data, indent=2, ensure_ascii=False))
+            # Show in the same list area used by "List Submolts"
+            self.submolts_list.clear()
+
+            # A nice header line
+            name = normalize_submolt(self.submolt_pick.currentText())
+            self.submolts_list.addItem(f"== Submolt Info: m/{name} ==")
+
+            # Pretty JSON in the list (one line per JSON line)
+            pretty = json.dumps(data, indent=2, ensure_ascii=False)
+            for line in pretty.splitlines():
+                self.submolts_list.addItem(line)
+
+            # Optionally switch to the Submolts tab so user sees it immediately
+            self.tabs_left.setCurrentIndex(2)
 
         self.run_bg("Loading submolt…", task, done)
 
