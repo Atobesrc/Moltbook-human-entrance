@@ -1,7 +1,7 @@
-# moltbook_desktop_qt.py
 import json
 import threading
 from typing import Any, Callable, List, Optional
+import re
 
 from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtGui import QColor, QPalette
@@ -507,16 +507,30 @@ class MainWindow(QMainWindow):
         # -------- Right side (post + comments)
         post_box = QGroupBox("Post")
         pb = QVBoxLayout(post_box)
+        pb.setSpacing(6)
+
+        self.post_title = QLabel("Select a post…")
+        self.post_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+        pb.addWidget(self.post_title)
+
+        goto_row = QHBoxLayout()
+        self.goto_post_id = QLineEdit()
+        self.goto_post_id.setPlaceholderText("Post ID")
+        self.goto_post_id.setMinimumWidth(420)
+        self.goto_post_id.returnPressed.connect(self.on_goto_post_clicked)
+        self.btn_goto_post = QPushButton("Go")
+        self.btn_goto_post.clicked.connect(self.on_goto_post_clicked)
+        goto_row.addWidget(self.goto_post_id, 1)
+        goto_row.addWidget(self.btn_goto_post)
+        pb.addLayout(goto_row)
 
         post_actions = QHBoxLayout()
-
         self.btn_post_reload = QPushButton("Reload")
         self.btn_post_upvote = QPushButton("Upvote")
         self.btn_post_downvote = QPushButton("Downvote")
         self.btn_post_delete = QPushButton("Delete (mine)")
         self.btn_post_pin = QPushButton("Pin")
         self.btn_post_unpin = QPushButton("Unpin")
-
         self.btn_post_reload.clicked.connect(self.on_reload_post)
         self.btn_post_upvote.clicked.connect(self.on_upvote_post)
         self.btn_post_downvote.clicked.connect(self.on_downvote_post)
@@ -1002,6 +1016,24 @@ class MainWindow(QMainWindow):
         self.post_body.setPlainText(header + content)
 
     # ---------- Post actions ----------
+    @safe_slot
+    def on_goto_post_clicked(self):
+        pid = self.goto_post_id.text().strip()
+        if not pid:
+            raise ValueError("Paste a post_id first.")
+
+        # Basic UUID sanity check (still allows valid UUID strings)
+        if not re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", pid):
+            raise ValueError("That doesn't look like a UUID post_id.")
+
+        # IMPORTANT: update selection state so reload/upvote/etc works on this post too
+        self.selected_post_id = pid
+        # Give immediate visual feedback (so it never feels stuck)
+        self.post_title.setText("Loading…")
+        self.post_body.setPlainText(f"Loading post:\n{pid}")
+        # This is what actually loads and renders the post into the post box
+        self.load_post(pid, activity="Loading post…")
+
     @safe_slot
     def on_reload_post(self):
         if not self.selected_post_id:
