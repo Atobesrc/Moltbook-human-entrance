@@ -3,12 +3,13 @@ import threading
 from typing import Any, Callable, List, Optional
 import re
 
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import Qt, QObject, Signal, QTimer
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QPlainTextEdit, QListWidget, QComboBox,
-    QSpinBox, QTabWidget, QGroupBox, QMessageBox, QFileDialog, QSplitter, QCheckBox
+    QSpinBox, QTabWidget, QGroupBox, QMessageBox, QFileDialog, QSplitter, QCheckBox,
+    QToolButton, QMenu, QInputDialog
 )
 
 from moltbook_client import MoltbookClient
@@ -140,6 +141,85 @@ class MainWindow(QMainWindow):
                 self.ui_invoke(apply_ok)
 
         threading.Thread(target=runner, daemon=True).start()
+
+    # ---------- Delayed execution (Quick Post) ----------
+    def schedule_or_run(
+            self,
+            delay_min: int,
+            activity: str,
+            task_fn: Callable[[], Any],
+            done_fn: Callable[[Any], None],
+            on_finish: Optional[Callable[[], None]] = None,
+    ):
+        """
+        If delay_min <= 0, run immediately via run_bg.
+        If delay_min > 0, schedule via QTimer.singleShot (Qt-safe).
+        """
+        if delay_min <= 0:
+            self.run_bg(activity, task_fn, done_fn, on_finish=on_finish)
+            return
+
+        # Show scheduling in "current action" log
+        self._start_action_log("Scheduling…")
+        self.set_activity("Scheduling…")
+
+        delay_ms = int(delay_min) * 60 * 1000
+
+        # Friendly feedback
+        self.bus.log_line.emit(f"Scheduled: {activity} in {delay_min} min.")
+        self.set_activity(f"Scheduled in {delay_min} min")
+
+        def fire():
+            self.run_bg(activity, task_fn, done_fn, on_finish=on_finish)
+
+        QTimer.singleShot(delay_ms, fire)
+
+    # ---------- Slack-style split button helper ----------
+    def _make_send_split_button(
+            self,
+            text: str,
+            send_now_cb: Callable[[], None],
+            send_later_cb: Callable[[int], None],
+    ) -> QToolButton:
+        """
+        Slack-style: main click sends immediately; arrow opens delay menu.
+        """
+        btn = QToolButton()
+        btn.setText(text)
+        btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        btn.setPopupMode(QToolButton.MenuButtonPopup)
+
+        menu = QMenu(btn)
+
+        def add_delay(label: str, minutes: int):
+            act = menu.addAction(label)
+            act.triggered.connect(lambda _=False, m=minutes: send_later_cb(m))
+
+        add_delay("Send in 5 min", 5)
+        add_delay("Send in 10 min", 10)
+        add_delay("Send in 20 min", 20)
+        add_delay("Send in 30 min", 30)
+        menu.addSeparator()
+
+        custom = menu.addAction("Custom…")
+
+        def on_custom():
+            m, ok = QInputDialog.getInt(
+                self,
+                "Schedule Send",
+                "Send in how many minutes?",
+                30,  # default
+                1,  # min
+                24 * 60  # max (1 day)
+            )
+            if ok and m > 0:
+                send_later_cb(int(m))
+
+        custom.triggered.connect(on_custom)
+
+        btn.setMenu(menu)
+        btn.clicked.connect(send_now_cb)
+        return btn
 
     # ----- Build UI -----
     def _build_ui(self):
@@ -277,10 +357,17 @@ class MainWindow(QMainWindow):
         # Make Quick Post panel SHORT
         self.new_post_content.setFixedHeight(88)
 
-        self.btn_create_text = QPushButton("Create Text Post")
-        self.btn_create_link = QPushButton("Create Link Post")
-        self.btn_create_text.clicked.connect(self.on_create_text_post)
-        self.btn_create_link.clicked.connect(self.on_create_link_post)
+        # Slack-style split buttons: click = send now, arrow = schedule
+        self.btn_create_text = self._make_send_split_button(
+            "Create Text Post",
+            send_now_cb=self.on_create_text_post,
+            send_later_cb=self.on_create_text_post_scheduled,
+        )
+        self.btn_create_link = self._make_send_split_button(
+            "Create Link Post",
+            send_now_cb=self.on_create_link_post,
+            send_later_cb=self.on_create_link_post_scheduled,
+        )
 
         qp.addWidget(QLabel("Submolt"), 0, 0)
         qp.addWidget(self.new_post_submolt, 0, 1)
@@ -1223,6 +1310,57 @@ class MainWindow(QMainWindow):
             self.on_refresh_feed_clicked()
 
         self.run_bg("Creating link post…", task, done)
+
+    # ---------- Scheduled Quick Post ----------
+    @safe_slot
+    def on_create_text_post_scheduled(self, delay_min: int):
+        def task():
+            self.require_key()
+            submolt = normalize_submolt(self.new_post_submolt.text())
+            title = self.new_post_title.text().strip()
+            content = self.new_post_content.toPlainText().strip()
+            if not submolt or not title or not content:
+                raise ValueError("Need submolt, title, and content.")
+            resp = self.client.create_post(submolt=submolt, title=title, content=content)
+            data = parse_json(self.client, resp)
+            if resp.status_code not in (200, 201):
+                raise ValueError(data.get("error") or json.dumps(data, indent=2, ensure_ascii=False))
+            return data
+
+        def done(data):
+            QMessageBox.information(
+                self,
+                "Posted",
+                f"Post created! (Scheduled +{delay_min} min)\n\n" + json.dumps(data, indent=2, ensure_ascii=False),
+            )
+            self.on_refresh_feed_clicked()
+
+        self.schedule_or_run(delay_min, "Creating post…", task, done)
+
+    @safe_slot
+    def on_create_link_post_scheduled(self, delay_min: int):
+        def task():
+            self.require_key()
+            submolt = normalize_submolt(self.new_post_submolt.text())
+            title = self.new_post_title.text().strip()
+            url = self.new_post_url.text().strip()
+            if not submolt or not title or not url:
+                raise ValueError("Need submolt, title, and url.")
+            resp = self.client.create_post(submolt=submolt, title=title, url=url)
+            data = parse_json(self.client, resp)
+            if resp.status_code not in (200, 201):
+                raise ValueError(data.get("error") or json.dumps(data, indent=2, ensure_ascii=False))
+            return data
+
+        def done(data):
+            QMessageBox.information(
+                self,
+                "Posted",
+                f"Link post created! (Scheduled +{delay_min} min)\n\n" + json.dumps(data, indent=2, ensure_ascii=False),
+            )
+            self.on_refresh_feed_clicked()
+
+        self.schedule_or_run(delay_min, "Creating link post…", task, done)
 
     # ---------- Comments ----------
     @safe_slot
